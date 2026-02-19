@@ -4,5 +4,5 @@ import vue from '@vitejs/plugin-vue'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
-  base: './', // Use relative path for better compatibility
+  base: '/HairSalonAppointment/', // GitHub Pages repository name
 })

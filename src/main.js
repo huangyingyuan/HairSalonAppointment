@@ -1,6 +1,6 @@
 import { createApp } from 'vue'
 import App from './App.vue'
-import { Calendar, NavBar, Divider, Empty, Toast, Grid, GridItem } from 'vant'
+import { Calendar, NavBar, Divider, Empty, Grid, GridItem } from 'vant'
 import 'vant/lib/index.css'
 
 const app = createApp(App)
@@ -10,7 +10,6 @@ app.use(Calendar)
 app.use(NavBar)
 app.use(Divider)
 app.use(Empty)
-app.use(Toast)
 app.use(Grid)
 app.use(GridItem)
 
