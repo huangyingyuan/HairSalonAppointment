@@ -32,12 +32,43 @@
         <van-empty description="本日店休，请选择其他日期" />
       </div>
 
-      <div v-else class="slots-grid">
+      <div v-if="isOwner" class="batch-controls" style="padding: 10px;">
+        <van-button 
+            v-if="!isBatchMode" 
+            type="primary" 
+            size="small" 
+            block 
+            @click="isBatchMode = true"
+        >
+            批量设置/取消休息
+        </van-button>
+        <div v-else style="display: flex; gap: 10px;">
+            <van-button 
+                type="default" 
+                size="small" 
+                style="flex: 1;" 
+                @click="cancelBatchMode"
+            >
+                退出
+            </van-button>
+            <van-button 
+                :type="isBatchCancelMode ? 'danger' : 'primary'" 
+                size="small" 
+                style="flex: 1;" 
+                @click="finishBatchMode"
+                :disabled="batchSelectedSlots.length === 0"
+            >
+                {{ isBatchCancelMode ? `批量取消 (${batchSelectedSlots.length})` : `批量设置 (${batchSelectedSlots.length})` }}
+            </van-button>
+        </div>
+      </div>
+
+      <div class="slots-grid">
         <div
           v-for="slot in timeSlots"
           :key="slot.time"
           class="time-slot"
-          :class="slot.status"
+          :class="[slot.status, { 'batch-selected': isBatchMode && batchSelectedSlots.includes(slot.time) }]"
           @click="handleSlotClick(slot)"
         >
           <div class="time">{{ slot.time }}</div>
@@ -136,13 +167,60 @@
       </van-form>
     </van-dialog>
 
+    <!-- Owner Logout Dialog -->
+    <van-dialog v-model:show="showLogoutDialog" title="确认退出" show-cancel-button @confirm="handleLogoutConfirm">
+      <div style="text-align: center; padding: 20px;">
+        确定要退出店长登录吗？
+      </div>
+    </van-dialog>
+
     <!-- Owner Set Offline Dialog -->
-    <van-dialog v-model:show="showOfflineDialog" title="设置不可预约" show-cancel-button @confirm="handleSetOffline">
-      <van-field
-        v-model="offlineReason"
-        label="理由"
-        placeholder="请输入不可预约理由"
-      />
+    <van-dialog v-model:show="showOfflineDialog" title="设置休息时间" show-cancel-button @confirm="handleSetOffline">
+      <van-form>
+        <van-field
+          v-model="offlineStartTime"
+          type="time"
+          label="开始时间"
+          placeholder="选择开始时间"
+        />
+        <van-field
+          v-model="offlineEndTime"
+          type="time"
+          label="结束时间"
+          placeholder="选择结束时间"
+        />
+        <van-field
+          v-model="offlineReason"
+          label="理由"
+          placeholder="请输入休息理由"
+        />
+      </van-form>
+    </van-dialog>
+    
+    <!-- Batch Cancel Confirmation Dialog -->
+    <van-dialog 
+      v-model:show="showBatchCancelDialog" 
+      title="批量取消休息" 
+      show-cancel-button 
+      @confirm="handleBatchCancel"
+    >
+      <div style="text-align: center; padding: 20px;">
+        确定要取消选中的 {{ batchSelectedSlots.length }} 个休息时间段吗？
+      </div>
+    </van-dialog>
+
+    <!-- Batch Set Offline Dialog -->
+    <van-dialog v-model:show="showBatchOfflineDialog" title="批量设置休息时间" show-cancel-button @confirm="handleBatchSetOffline">
+      <van-form>
+        <div style="padding: 10px; text-align: center; color: #666;">
+            已选择 {{ batchSelectedSlots.length }} 个时间段
+        </div>
+        <van-field
+          v-model="offlineReason"
+          label="理由"
+          placeholder="请输入休息理由"
+        />
+      </van-form>
     </van-dialog>
     
     <!-- Owner View Detail Popup -->
@@ -161,11 +239,12 @@
 
 <script setup>
 import { ref, computed, onMounted, reactive } from 'vue';
+import { Calendar, NavBar, Divider, Empty, Grid, GridItem, Popup, Form, Field, CellGroup, RadioGroup, Radio, Button, showToast, NoticeBar, Dialog, Cell } from 'vant';
 import dayjs from 'dayjs';
 import isSameOrBefore from 'dayjs/plugin/isSameOrBefore';
 import isSameOrAfter from 'dayjs/plugin/isSameOrAfter';
 import { shopConfig, appointments as initialAppointments, closedDates, services } from '../data/schedule';
-import { showToast, Dialog } from 'vant';
+import { cloudStorage } from '../utils/cloudStorage';
 
 dayjs.extend(isSameOrBefore);
 dayjs.extend(isSameOrAfter);
@@ -173,13 +252,41 @@ dayjs.extend(isSameOrAfter);
 const minDate = new Date();
 const maxDate = dayjs().add(shopConfig.maxDaysAdvance, 'day').toDate();
 const selectedDate = ref(new Date());
+const isSyncing = ref(false); // Cloud sync status
 
 // Local state
 const localAppointments = ref([...initialAppointments]);
 const unavailableSlots = ref([]); // Store owner-set offline slots: { date: 'YYYY-MM-DD', time: 'HH:mm', reason: '...' }
 const isOwner = ref(false);
+const isBatchMode = ref(false);
+const batchSelectedSlots = ref([]);
+const showBatchOfflineDialog = ref(false);
+const showBatchCancelDialog = ref(false);
 
-// Load from localStorage
+const loadFromCloud = async () => {
+  isSyncing.value = true;
+  const data = await cloudStorage.loadData();
+  if (data) {
+    if (data.appointments) localAppointments.value = data.appointments;
+    if (data.unavailableSlots) unavailableSlots.value = data.unavailableSlots;
+    // Update local storage as well
+    localStorage.setItem('appointments', JSON.stringify(localAppointments.value));
+    localStorage.setItem('unavailableSlots', JSON.stringify(unavailableSlots.value));
+  }
+  isSyncing.value = false;
+};
+
+const saveToCloud = async () => {
+  isSyncing.value = true;
+  const data = {
+    appointments: localAppointments.value,
+    unavailableSlots: unavailableSlots.value
+  };
+  await cloudStorage.saveData(data);
+  isSyncing.value = false;
+};
+
+// Load from localStorage then Cloud
 onMounted(() => {
   const savedApps = localStorage.getItem('appointments');
   if (savedApps) {
@@ -193,10 +300,14 @@ onMounted(() => {
   if (savedOwner === 'true') {
     isOwner.value = true;
   }
+  
+  // Load latest data from cloud
+  loadFromCloud();
 });
 
 const showBookingPopup = ref(false);
 const showLoginDialog = ref(false);
+const showLogoutDialog = ref(false);
 const showOfflineDialog = ref(false);
 const showDetailPopup = ref(false);
 const currentBookingSlot = ref(null);
@@ -205,6 +316,8 @@ const selectedServiceId = ref(services[0].id);
 const customerName = ref('');
 const customerPhone = ref('');
 const offlineReason = ref('');
+const offlineStartTime = ref('');
+const offlineEndTime = ref('');
 
 const loginForm = reactive({
   username: '',
@@ -219,21 +332,45 @@ const isShopClosed = computed(() => {
   return closedDates.includes(formattedDate.value);
 });
 
-// Compute announcements for today
-const todayAnnouncements = computed(() => {
-  const slots = unavailableSlots.value.filter(s => s.date === formattedDate.value);
-  if (slots.length === 0) return '';
-  
-  // Group consecutive slots or just list reasons
-  // Simple version: List unique reasons
-  const reasons = [...new Set(slots.map(s => s.reason))];
-  const timeRanges = slots.map(s => s.time).sort();
-  
-  if (reasons.length > 0) {
-    return `温馨提示：${formattedDate.value} 部分时段因 ${reasons.join(', ')} 暂停服务，请选择其他时段。`;
-  }
-  return '';
+const todayBreaks = computed(() => {
+    return unavailableSlots.value
+        .filter(s => s.date === formattedDate.value)
+        .map(s => ({
+            ...s,
+            startTime: s.startTime || s.time,
+            endTime: s.endTime || (s.time ? dayjs(s.date + ' ' + s.time).add(shopConfig.slotDuration || 30, 'minute').format('HH:mm') : '')
+        }));
 });
+
+  // Compute announcements for today
+  const todayAnnouncements = computed(() => {
+    const slots = unavailableSlots.value.filter(s => s.date === formattedDate.value);
+    if (slots.length === 0) return '';
+    
+    // Format: "15:15-15:30 休息"
+    const details = slots.map(s => {
+        let startTime = s.startTime || s.time;
+        let endTime = s.endTime || (s.time ? dayjs(s.date + ' ' + s.time).add(shopConfig.slotDuration || 30, 'minute').format('HH:mm') : '');
+        return `${startTime}-${endTime} ${s.reason}`;
+    });
+    
+    // Find the latest end time to indicate when business resumes
+    let resumeTime = '';
+    if (slots.length > 0) {
+        // Sort by end time
+        const sortedSlots = [...slots].sort((a, b) => {
+             let endA = a.endTime || (a.time ? dayjs(a.date + ' ' + a.time).add(shopConfig.slotDuration || 30, 'minute').format('HH:mm') : '');
+             let endB = b.endTime || (b.time ? dayjs(b.date + ' ' + b.time).add(shopConfig.slotDuration || 30, 'minute').format('HH:mm') : '');
+             return endA > endB ? -1 : 1; // Descending
+        });
+        
+        const latestSlot = sortedSlots[0];
+        const latestEnd = latestSlot.endTime || (latestSlot.time ? dayjs(latestSlot.date + ' ' + latestSlot.time).add(shopConfig.slotDuration || 30, 'minute').format('HH:mm') : '');
+        resumeTime = `，预计 ${latestEnd} 恢复营业`;
+    }
+    
+    return `温馨提示：${formattedDate.value} 店家休息安排：${details.join('，')}${resumeTime}。`;
+  });
 
 const timeSlots = computed(() => {
   const slots = [];
@@ -250,9 +387,26 @@ const timeSlots = computed(() => {
     const timeStr = current.format('HH:mm');
     const slotStart = current;
     const slotEnd = current.add(slotDuration, 'minute');
+    const slotEndStr = slotEnd.format('HH:mm');
     
     // 1. Check if manually set offline by owner
-    const offlineSlot = unavailableSlots.value.find(s => s.date === dateStr && s.time === timeStr);
+    const offlineSlot = unavailableSlots.value.find(s => {
+       if (s.date !== dateStr) return false;
+       
+       let sStart = s.startTime || s.time;
+       let sEnd = s.endTime;
+       
+       // Handle legacy exact match or single-point breaks
+       if (!sEnd && s.time) {
+           return s.time === timeStr;
+       }
+       
+       // Overlap logic: (BreakStart < SlotEnd) && (BreakEnd > SlotStart)
+       if (sStart && sEnd) {
+           return sStart < slotEndStr && sEnd > timeStr;
+       }
+       return false;
+    });
     
     // 2. Check if booked
     // A slot is booked if any appointment overlaps with this slot
@@ -268,10 +422,12 @@ const timeSlots = computed(() => {
     
     let status = 'available';
     let reason = '';
+    let offlineData = null; // Store full offline object for cancellation
     
     if (offlineSlot) {
       status = 'offline';
       reason = offlineSlot.reason;
+      offlineData = offlineSlot;
     } else if (appointment) {
       status = 'booked';
     } else if (dayjs(dateStr).isSame(dayjs(), 'day')) {
@@ -280,7 +436,7 @@ const timeSlots = computed(() => {
       }
     }
 
-    slots.push({ time: timeStr, status, appointment, reason });
+    slots.push({ time: timeStr, status, appointment, reason, offlineData });
     current = current.add(slotDuration, 'minute');
   }
   return slots;
@@ -292,19 +448,19 @@ const onDateSelect = (date) => {
 
 const handleLoginClick = () => {
   if (isOwner.value) {
-    Dialog.confirm({
-      title: '确认退出',
-      message: '确定要退出店长登录吗？',
-    }).then(() => {
-      isOwner.value = false;
-      localStorage.removeItem('isOwner');
-      showToast('已退出登录');
-    }).catch(() => {});
+    showLogoutDialog.value = true;
   } else {
     showLoginDialog.value = true;
-    loginForm.username = '18127313318'; // Pre-fill for convenience as requested default
+    loginForm.username = '18127313318'; // Pre-fill for convenience
     loginForm.password = '';
   }
+};
+
+const handleLogoutConfirm = () => {
+  isOwner.value = false;
+  localStorage.removeItem('isOwner');
+  showToast('已退出登录');
+  showLogoutDialog.value = false;
 };
 
 const handleLoginConfirm = () => {
@@ -323,23 +479,77 @@ const handleLoginConfirm = () => {
 
 const handleSlotClick = (slot) => {
   if (isOwner.value) {
+    // Batch mode handling
+    if (isBatchMode.value) {
+        if (slot.status === 'booked') {
+            showToast('无法选择已预约的时间段');
+            return;
+        }
+        
+        const index = batchSelectedSlots.value.indexOf(slot.time);
+        if (index > -1) {
+            batchSelectedSlots.value.splice(index, 1);
+        } else {
+            batchSelectedSlots.value.push(slot.time);
+        }
+        return;
+    }
+
     // Owner interactions
     if (slot.status === 'available') {
       currentBookingSlot.value = slot;
       offlineReason.value = '';
+      
+      // Pre-fill time
+      offlineStartTime.value = slot.time;
+      // Calculate end time
+      const duration = shopConfig.slotDuration || 30;
+      const [h, m] = slot.time.split(':').map(Number);
+      const endD = dayjs().hour(h).minute(m).add(duration, 'minute');
+      offlineEndTime.value = endD.format('HH:mm');
+
       showOfflineDialog.value = true;
     } else if (slot.status === 'booked') {
       currentDetailSlot.value = slot;
       showDetailPopup.value = true;
     } else if (slot.status === 'offline') {
+       // Find the specific rule blocking this slot
+       const duration = shopConfig.slotDuration || 30;
+       const slotStartStr = slot.time;
+       const [h, m] = slotStartStr.split(':').map(Number);
+       const slotEndStr = dayjs().hour(h).minute(m).add(duration, 'minute').format('HH:mm');
+
+       const blockingRule = unavailableSlots.value.find(s => {
+           if (s.date !== formattedDate.value) return false;
+           
+           let sStart = s.startTime || s.time;
+           let sEnd = s.endTime;
+           
+           // Legacy exact match
+           if (!sEnd && s.time) {
+               return s.time === slot.time;
+           }
+           
+           // Overlap check
+           return sStart < slotEndStr && sEnd > slotStartStr;
+       });
+
+       if (!blockingRule) {
+           showToast('未找到对应的休息规则');
+           return;
+       }
+
        Dialog.confirm({
-        title: '取消限制',
-        message: '确定要恢复该时段为可预约状态吗？',
+        title: '取消休息',
+        message: `确定要取消 ${blockingRule.startTime || blockingRule.time} - ${blockingRule.endTime || '未知'} 的休息安排吗？`,
       }).then(() => {
-        // Remove from unavailableSlots
-        unavailableSlots.value = unavailableSlots.value.filter(s => !(s.date === formattedDate.value && s.time === slot.time));
+        unavailableSlots.value = unavailableSlots.value.filter(s => s !== blockingRule);
+        
         localStorage.setItem('unavailableSlots', JSON.stringify(unavailableSlots.value));
-        showToast('已恢复');
+        saveToCloud();
+        showToast('已恢复营业');
+      }).catch(() => {
+        // Cancelled
       });
     }
     return;
@@ -356,17 +566,135 @@ const handleSlotClick = (slot) => {
   showBookingPopup.value = true;
 };
 
+const cancelBatchMode = () => {
+  isBatchMode.value = false;
+  batchSelectedSlots.value = [];
+};
+
+const isBatchCancelMode = computed(() => {
+    if (batchSelectedSlots.value.length === 0) return false;
+    const duration = shopConfig.slotDuration || 30;
+    
+    // Check if ALL selected slots are ALREADY offline
+    return batchSelectedSlots.value.every(slotTime => {
+        const slotStartStr = slotTime;
+        const [h, m] = slotStartStr.split(':').map(Number);
+        const slotEndStr = dayjs().hour(h).minute(m).add(duration, 'minute').format('HH:mm');
+
+        // Check overlap with existing rules
+        return unavailableSlots.value.some(s => {
+            if (s.date !== formattedDate.value) return false;
+            let sStart = s.startTime || s.time;
+            let sEnd = s.endTime || (s.time ? dayjs(s.date + ' ' + s.time).add(duration, 'minute').format('HH:mm') : '');
+            return sStart < slotEndStr && sEnd > slotStartStr;
+        });
+    });
+});
+
+const finishBatchMode = () => {
+  if (batchSelectedSlots.value.length === 0) return;
+
+  if (isBatchCancelMode.value) {
+      showBatchCancelDialog.value = true;
+  } else {
+      offlineReason.value = '';
+      showBatchOfflineDialog.value = true;
+  }
+};
+
+const handleBatchCancel = () => {
+    const duration = shopConfig.slotDuration || 30;
+    
+    // Filter out rules that overlap with ANY selected slot
+    unavailableSlots.value = unavailableSlots.value.filter(s => {
+        if (s.date !== formattedDate.value) return true;
+        
+        let sStart = s.startTime || s.time;
+        let sEnd = s.endTime || (s.time ? dayjs(s.date + ' ' + s.time).add(duration, 'minute').format('HH:mm') : '');
+        
+        // Check if this rule overlaps with ANY selected slot
+        const isOverlapping = batchSelectedSlots.value.some(slotTime => {
+            const [h, m] = slotTime.split(':').map(Number);
+            const slotEndStr = dayjs().hour(h).minute(m).add(duration, 'minute').format('HH:mm');
+            return sStart < slotEndStr && sEnd > slotTime;
+        });
+        
+        return !isOverlapping; // Keep if NOT overlapping
+    });
+    
+    localStorage.setItem('unavailableSlots', JSON.stringify(unavailableSlots.value));
+    saveToCloud();
+    showToast(`已取消 ${batchSelectedSlots.value.length} 个休息时间段`);
+    cancelBatchMode();
+};
+
+const handleBatchSetOffline = () => {
+    if (!offlineReason.value) {
+        showToast('请输入理由');
+        return;
+    }
+    
+    const duration = shopConfig.slotDuration || 30;
+    
+    // First, remove any existing rules that overlap with the new slots (to avoid duplicates or conflicts)
+    // Using the same logic as handleBatchCancel but without the user confirmation
+    unavailableSlots.value = unavailableSlots.value.filter(s => {
+        if (s.date !== formattedDate.value) return true;
+        let sStart = s.startTime || s.time;
+        let sEnd = s.endTime || (s.time ? dayjs(s.date + ' ' + s.time).add(duration, 'minute').format('HH:mm') : '');
+        
+        const isOverlapping = batchSelectedSlots.value.some(slotTime => {
+            const [h, m] = slotTime.split(':').map(Number);
+            const slotEndStr = dayjs().hour(h).minute(m).add(duration, 'minute').format('HH:mm');
+            return sStart < slotEndStr && sEnd > slotTime;
+        });
+        return !isOverlapping;
+    });
+    
+    batchSelectedSlots.value.forEach(timeStr => {
+        const [h, m] = timeStr.split(':').map(Number);
+        const endD = dayjs().hour(h).minute(m).add(duration, 'minute');
+        const endTimeStr = endD.format('HH:mm');
+        
+        unavailableSlots.value.push({
+            date: formattedDate.value,
+            time: timeStr,
+            startTime: timeStr,
+            endTime: endTimeStr,
+            reason: offlineReason.value
+        });
+    });// Save
+    localStorage.setItem('unavailableSlots', JSON.stringify(unavailableSlots.value));
+    saveToCloud();
+    showToast(`成功设置 ${batchSelectedSlots.value.length} 个休息时间段`);
+    showBatchOfflineDialog.value = false;
+    cancelBatchMode();
+};
+
 const handleSetOffline = () => {
   if (!offlineReason.value) {
     showToast('请输入理由');
     return;
   }
+  if (!offlineStartTime.value || !offlineEndTime.value) {
+     showToast('请完整填写时间');
+     return;
+  }
+  
+  if (offlineStartTime.value >= offlineEndTime.value) {
+      showToast('结束时间必须晚于开始时间');
+      return;
+  }
+
   unavailableSlots.value.push({
     date: formattedDate.value,
     time: currentBookingSlot.value.time,
+    startTime: offlineStartTime.value,
+    endTime: offlineEndTime.value,
     reason: offlineReason.value
   });
   localStorage.setItem('unavailableSlots', JSON.stringify(unavailableSlots.value));
+  saveToCloud();
   showToast('设置成功');
   showOfflineDialog.value = false;
 };
@@ -390,6 +718,9 @@ const confirmBooking = () => {
   // Save to localStorage
   localStorage.setItem('appointments', JSON.stringify(localAppointments.value));
   
+  // Save to Cloud
+  saveToCloud();
+  
   showToast('预约成功！');
   showBookingPopup.value = false;
   
@@ -397,6 +728,45 @@ const confirmBooking = () => {
   customerName.value = '';
   customerPhone.value = '';
   selectedServiceId.value = services[0].id;
+};
+
+const cancelAppointment = () => {
+  Dialog.confirm({
+    title: '取消预约',
+    message: '确定要取消该预约吗？',
+  }).then(() => {
+    // Remove from localAppointments
+    // Fix: Find the appointment object, not the slot object
+    // currentDetailSlot is the slot object which contains the appointment
+    if (!currentDetailSlot.value || !currentDetailSlot.value.appointment) return;
+    
+    const appointment = currentDetailSlot.value.appointment;
+    const index = localAppointments.value.indexOf(appointment);
+    
+    if (index > -1) {
+      localAppointments.value.splice(index, 1);
+      localStorage.setItem('appointments', JSON.stringify(localAppointments.value));
+      saveToCloud();
+      showToast('预约已取消');
+      showDetailPopup.value = false;
+    } else {
+        // Fallback: Try to find by id or other properties if object reference differs
+        const idx = localAppointments.value.findIndex(a => 
+            a.date === appointment.date && 
+            a.time === appointment.time && 
+            a.customerPhone === appointment.customerPhone
+        );
+        if (idx > -1) {
+            localAppointments.value.splice(idx, 1);
+            localStorage.setItem('appointments', JSON.stringify(localAppointments.value));
+            saveToCloud();
+            showToast('预约已取消');
+            showDetailPopup.value = false;
+        }
+    }
+  }).catch(() => {
+    // on cancel
+  });
 };
 </script>
 
@@ -470,5 +840,22 @@ const confirmBooking = () => {
 }
 .service-radio {
   margin-bottom: 8px;
+}
+.time-slot.batch-selected {
+  background-color: #e6f7ff;
+  border-color: #1890ff;
+  color: #1890ff;
+  position: relative;
+}
+.time-slot.batch-selected::after {
+    content: '✔';
+    position: absolute;
+    top: 0;
+    right: 0;
+    background: #1890ff;
+    color: white;
+    font-size: 10px;
+    padding: 0 4px;
+    border-bottom-left-radius: 4px;
 }
 </style>

@@ -2,7 +2,7 @@ export const shopConfig = {
   openTime: '09:00',
   closeTime: '21:00',
   slotDuration: 30, // Changed to 30 mins for better granularity
-  maxDaysAdvance: 7, // how many days in advance to show
+  maxDaysAdvance: 30, // how many days in advance to show
 };
 
 export const services = [
