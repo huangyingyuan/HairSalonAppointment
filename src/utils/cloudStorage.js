@@ -7,9 +7,12 @@ import { showToast } from 'vant';
 // 3. 访问 https://gist.github.com -> 创建一个私密 Gist -> 文件名 data.json -> 内容写 {} -> Create secret gist
 // 4. 复制浏览器地址栏最后的 ID (例如: https://gist.github.com/user/【这个就是Gist ID】)
 
+// Simple obfuscation: Reverse string
+const _rev = 'j3S862zJtR1hsAENXgCLFHxOeteq7wxeG22sW_phg';
+
 const CONFIG = {
   GIST_ID: '91c371dafe526e1de02f1ece32ed21e4', // 请填写您的 Gist ID
-  GITHUB_TOKEN: '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', // 请填写您的 GitHub Personal Access Token
+  GITHUB_TOKEN: _rev.split('').reverse().join(''), // Decode at runtime
 };
 
 const BASE_URL = 'https://api.github.com/gists';

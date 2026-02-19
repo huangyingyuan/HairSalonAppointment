@@ -2,7 +2,25 @@
   "hash": "3665d92b",
   "configHash": "b65a62c9",
   "lockfileHash": "46851241",
-  "browserHash": "fc6b41d6",
-  "optimized": {},
-  "chunks": {}
+  "browserHash": "11f67323",
+  "optimized": {
+    "vant": {
+      "src": "../../node_modules/vant/es/index.mjs",
+      "file": "vant.js",
+      "fileHash": "66f30a74",
+      "needsInterop": false
+    },
+    "vue": {
+      "src": "../../node_modules/vue/dist/vue.runtime.esm-bundler.js",
+      "file": "vue.js",
+      "fileHash": "56155969",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "vue.runtime.esm-bundler-A7uhAA3N": {
+      "file": "vue.runtime.esm-bundler-A7uhAA3N.js",
+      "isDynamicEntry": false
+    }
+  }
 }

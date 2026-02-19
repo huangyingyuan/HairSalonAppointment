@@ -25,7 +25,11 @@
 
     <div class="schedule-section" v-if="selectedDate">
       <van-divider content-position="center">
-        {{ formattedDate }} 预约情况 <span v-if="isSyncing" style="font-size: 12px; color: #999;">(同步中...)</span>
+        {{ formattedDate }} 预约情况 
+        <span style="font-size: 12px; color: #999; margin-left: 5px;">
+          <template v-if="isSyncing">(同步中...)</template>
+          <template v-else-if="lastSyncTime">(上次更新: {{ lastSyncTime }})</template>
+        </span>
       </van-divider>
 
       <div v-if="isShopClosed" class="closed-message">
@@ -253,6 +257,7 @@ const minDate = new Date();
 const maxDate = dayjs().add(shopConfig.maxDaysAdvance, 'day').toDate();
 const selectedDate = ref(new Date());
 const isSyncing = ref(false); // Cloud sync status
+const lastSyncTime = ref(''); // Last successful sync time
 let intervalId;
 
 // Local state
@@ -268,22 +273,87 @@ const loadFromCloud = async (isBackground = false) => {
   isSyncing.value = true;
   const data = await cloudStorage.loadData(isBackground);
   if (data) {
+    // Basic merge: update local state with cloud data
+    // In a real app, we might need more complex merging if local has unsaved changes
     if (data.appointments) localAppointments.value = data.appointments;
     if (data.unavailableSlots) unavailableSlots.value = data.unavailableSlots;
-    // Update local storage as well
+    
+    // Update local storage
     localStorage.setItem('appointments', JSON.stringify(localAppointments.value));
     localStorage.setItem('unavailableSlots', JSON.stringify(unavailableSlots.value));
+    
+    lastSyncTime.value = dayjs().format('HH:mm:ss');
   }
   isSyncing.value = false;
 };
 
 const saveToCloud = async () => {
   isSyncing.value = true;
+  
+  // Safe Save: Fetch -> Merge -> Save
+  // 1. Fetch latest cloud data
+  const cloudData = await cloudStorage.loadData(true); // silent load
+  
+  let finalAppointments = localAppointments.value;
+  let finalUnavailableSlots = unavailableSlots.value;
+
+  if (cloudData) {
+      // 2. Merge Logic
+      // Strategy: Union of Cloud and Local. 
+      // Since we don't have IDs for everything, we use JSON string comparison or simple concat + dedup.
+      // For appointments: We trust our Local "add/remove" operations are valid.
+      // But if someone else added an appointment, we want to keep it.
+      
+      // Simple approach: 
+      // If we just added an appointment, our local list has it. Cloud might have others.
+      // Merging is hard without unique IDs. 
+      // Let's assume for now that `localAppointments` IS the source of truth for THIS user's actions.
+      // But we need to include others' actions.
+      
+      // Better Strategy for this app:
+      // We rely on the fact that we just loaded the data before user interaction? No, user interacts then we save.
+      // So:
+      // a. Take Cloud Data.
+      // b. Apply the "Diff" of what we just changed? Too hard.
+      
+      // Fallback to "Last Write Wins" BUT with a quick fetch before write to minimize window.
+      // Since we just fetched 'cloudData' above, let's use it as base?
+      // No, because 'localAppointments' already has the user's new booking.
+      
+      // Let's try to combine them intelligently.
+      // Combine arrays and remove exact duplicates.
+      
+      const mergeArrays = (arr1, arr2) => {
+          const combined = [...(arr1 || []), ...(arr2 || [])];
+          const unique = [];
+          const map = new Map();
+          for (const item of combined) {
+              const key = JSON.stringify(item);
+              if (!map.has(key)) {
+                  map.set(key, true);
+                  unique.push(item);
+              }
+          }
+          return unique;
+      };
+      
+      finalAppointments = mergeArrays(cloudData.appointments, localAppointments.value);
+      finalUnavailableSlots = mergeArrays(cloudData.unavailableSlots, unavailableSlots.value);
+      
+      // Update local state with the merged result so UI reflects it
+      localAppointments.value = finalAppointments;
+      unavailableSlots.value = finalUnavailableSlots;
+  }
+
   const data = {
-    appointments: localAppointments.value,
-    unavailableSlots: unavailableSlots.value
+    appointments: finalAppointments,
+    unavailableSlots: finalUnavailableSlots
   };
-  await cloudStorage.saveData(data);
+  
+  const success = await cloudStorage.saveData(data);
+  if (success) {
+      lastSyncTime.value = dayjs().format('HH:mm:ss');
+  }
   isSyncing.value = false;
 };
 
