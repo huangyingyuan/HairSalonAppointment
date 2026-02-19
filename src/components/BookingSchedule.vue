@@ -25,7 +25,7 @@
 
     <div class="schedule-section" v-if="selectedDate">
       <van-divider content-position="center">
-        {{ formattedDate }} 预约情况
+        {{ formattedDate }} 预约情况 <span v-if="isSyncing" style="font-size: 12px; color: #999;">(同步中...)</span>
       </van-divider>
 
       <div v-if="isShopClosed" class="closed-message">
@@ -238,7 +238,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, reactive } from 'vue';
+import { ref, computed, onMounted, onUnmounted, reactive } from 'vue';
 import { Calendar, NavBar, Divider, Empty, Grid, GridItem, Popup, Form, Field, CellGroup, RadioGroup, Radio, Button, showToast, NoticeBar, Dialog, Cell } from 'vant';
 import dayjs from 'dayjs';
 import isSameOrBefore from 'dayjs/plugin/isSameOrBefore';
@@ -253,6 +253,7 @@ const minDate = new Date();
 const maxDate = dayjs().add(shopConfig.maxDaysAdvance, 'day').toDate();
 const selectedDate = ref(new Date());
 const isSyncing = ref(false); // Cloud sync status
+let intervalId;
 
 // Local state
 const localAppointments = ref([...initialAppointments]);
@@ -263,9 +264,9 @@ const batchSelectedSlots = ref([]);
 const showBatchOfflineDialog = ref(false);
 const showBatchCancelDialog = ref(false);
 
-const loadFromCloud = async () => {
+const loadFromCloud = async (isBackground = false) => {
   isSyncing.value = true;
-  const data = await cloudStorage.loadData();
+  const data = await cloudStorage.loadData(isBackground);
   if (data) {
     if (data.appointments) localAppointments.value = data.appointments;
     if (data.unavailableSlots) unavailableSlots.value = data.unavailableSlots;
@@ -303,6 +304,13 @@ onMounted(() => {
   
   // Load latest data from cloud
   loadFromCloud();
+  
+  // Auto-refresh every 5 seconds
+  intervalId = setInterval(() => loadFromCloud(true), 5000);
+});
+
+onUnmounted(() => {
+  if (intervalId) clearInterval(intervalId);
 });
 
 const showBookingPopup = ref(false);

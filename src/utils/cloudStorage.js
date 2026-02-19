@@ -16,7 +16,7 @@ const BASE_URL = 'https://api.github.com/gists';
 
 export const cloudStorage = {
   // 从 GitHub Gist 获取数据
-  async loadData() {
+  async loadData(isBackground = false) {
     if (!CONFIG.GIST_ID || !CONFIG.GITHUB_TOKEN) {
       console.warn('请先配置 GitHub Gist ID 和 Token');
       return null;
@@ -30,11 +30,18 @@ export const cloudStorage = {
         }
       });
       
-      const content = response.data.files['data.json'].content;
+      const file = response.data.files['data.json'];
+      if (!file) {
+          console.error('找不到 data.json 文件，请检查 Gist 文件名');
+          if (!isBackground) showToast('配置错误: Gist 中找不到 data.json');
+          return null;
+      }
+      
+      const content = file.content;
       return JSON.parse(content);
     } catch (error) {
       console.error('同步数据失败:', error);
-      // showToast('同步数据失败，请检查网络');
+      if (!isBackground) showToast('同步数据失败，请检查网络或配置');
       return null;
     }
   },
