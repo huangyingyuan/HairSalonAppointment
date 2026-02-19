@@ -1,6 +1,6 @@
 import { createApp } from 'vue'
 import App from './App.vue'
-import { Calendar, NavBar, Divider, Empty, Grid, GridItem, Popup, Form, Field, CellGroup, RadioGroup, Radio, Button, showToast } from 'vant'
+import { Calendar, NavBar, Divider, Empty, Grid, GridItem, Popup, Form, Field, CellGroup, RadioGroup, Radio, Button, showToast, NoticeBar, Dialog } from 'vant'
 import 'vant/lib/index.css'
 
 const app = createApp(App)
@@ -19,6 +19,8 @@ app.use(CellGroup)
 app.use(RadioGroup)
 app.use(Radio)
 app.use(Button)
+app.use(NoticeBar)
+app.use(Dialog)
 // showToast is a function, not a component to use, but we can attach it if needed or import directly
 
 app.mount('#app')
