@@ -2,7 +2,9 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [vue()],
-  base: '/HairSalonAppointment/', // GitHub Pages repository name
+export default defineConfig(({ command }) => {
+  return {
+    plugins: [vue()],
+    base: command === 'serve' ? '/' : '/HairSalonAppointment/', // '/' for dev, '/HairSalonAppointment/' for build
+  }
 })
